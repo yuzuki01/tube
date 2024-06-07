@@ -4,6 +4,8 @@
 using namespace Tube;
 
 int Tube::ncell, Tube::nface;
+std::vector<Cell> Tube::cells;
+std::vector<Face> Tube::faces;
 
 void Tube::init_mesh(int N) {
     ncell = N;

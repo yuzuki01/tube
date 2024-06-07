@@ -43,8 +43,8 @@ namespace Tube {
         Face(int face_id, double x) : id(face_id), x(x), neighbors({face_id, face_id}) {};
     };
 
-    std::vector<Cell> cells;
-    std::vector<Face> faces;
+    extern std::vector<Cell> cells;
+    extern std::vector<Face> faces;
 
     typedef std::vector<double> Field;
     typedef std::vector<Field> DistributionFunction;

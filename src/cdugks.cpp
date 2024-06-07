@@ -11,7 +11,7 @@ Field Tube::rho_cell, Tube::rho_cell_n, Tube::rho_face;
 Field Tube::vel_cell, Tube::vel_cell_n, Tube::vel_face;
 Field Tube::T_cell, Tube::T_cell_n, Tube::T_face;
 Field Tube::tau_cell, Tube::tau_cell_n;
-Field Tube::q_cell, q_face;
+Field Tube::q_cell, Tube::q_face;
 
 void Tube::initial() {
     init_mesh(N_MESH);
