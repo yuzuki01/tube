@@ -1,39 +1,123 @@
 #include "tube.h"
 
 
-using namespace Tube;
+Cell::Cell(ObjectId id) : id(id), face_id({id, id + 1}) {}
 
-int Tube::ncell, Tube::nface;
-std::vector<Cell> Tube::cells;
-std::vector<Face> Tube::faces;
+Face::Face(ObjectId id) : id(id) {}
 
-void Tube::init_mesh(int N) {
-    ncell = N;
-    nface = N + 1;
-    for (int i = 0; i < N + 1; ++i) {
-        auto pos = L0 * (double(i) / double(N));
-        faces.emplace_back(i, pos);
+Field nc_weight = {1. / 8., 3. / 8., 3. / 8., 1. / 8.};
+
+void Mesh::generate_dvs(int mount, double scale) {
+    const int n = 3;
+    NCELL = n * mount + 1;
+    double dh = 2.0 * scale / mount;
+    Field coordinate(NCELL), weight(NCELL);
+    for (int i = 0; i < NCELL; i++) {
+        coordinate[i] = scale * double(2 * i + 1 - NCELL) / double(NCELL - 1);
+        weight[i] = 0.0;
     }
-    for (int i = 0; i < N; ++i) {
-        auto pos = (faces[i].x + faces[i + 1].x) / 2.0;
-        auto vol = faces[i + 1].x - faces[i].x;
-        cells.emplace_back(i, pos, vol);
+    for (int i = 0; i < mount; ++i) {
+        for (int j = 0; j < n + 1; ++j) {
+            weight[i * n + j] += nc_weight[j] * dh;
+        }
     }
-    for (int i = 1; i < N + 1; ++i) {
-        faces[i].neighbors[0] = i - 1;
-    }
-}
-
-
-Field Tube::dvs_wgt(N_DVS), Tube::dvs_vel(N_DVS);
-
-void Tube::init_dvs(double scale) {
-    for (int i = 0; i < N_DVS; ++i) {
-        dvs_vel[i] = scale * ((2.0 * i + 1.0 - N_DVS) / (N_DVS - 1.0));
-        dvs_wgt[i] = 2.0 * scale / (N_DVS - 1.0);
+    max_cell_mag = 0.0;
+    for (int i = 0; i < NCELL; ++i) {
+        Cell cell(i);
+        cell.position = coordinate[i];
+        cell.volume = weight[i];
+        cells.push_back(cell);
+        double cell_mag = cell.position;
+        if (max_cell_mag < cell_mag) max_cell_mag = cell_mag;
     }
 }
 
-void Tube::output() {
-    std::ofstream fp;
+void Mesh::generate_mesh(int ncell) {
+    NCELL = ncell;
+    NFACE = ncell + 1;
+    cells.reserve(NCELL);
+    faces.reserve(NFACE);
+    /// generate face
+    for (int i = 0; i < NFACE; ++i) {
+        Face face(i);
+        face.position = double(i) / double(NFACE - 1);
+        if (i == 0) {
+            // left
+            face.cell_id = {i, i};
+            face.normal_vector = {-1, 1};
+        } else if (i == NFACE - 1) {
+            // right
+            face.cell_id = {i - 1, i - 1};
+            face.normal_vector = {1, -1};
+        } else {
+            // interior
+            face.cell_id = {i - 1, i};
+            face.normal_vector = {1, -1};
+        }
+        faces.push_back(face);
+    }
+    min_cell_size = faces[1].position - faces[0].position;
+    /// generate cell
+    for (int i = 0; i < NCELL; ++i) {
+        Cell cell(i);
+        auto &f0 = faces[cell.face_id[0]];
+        auto &f1 = faces[cell.face_id[1]];
+        cell.position = (f0.position + f1.position) * 0.5;
+        cell.volume = f1.position - f0.position;
+        auto cell_size = 0.5 * cell.volume;
+        if (min_cell_size > cell_size) min_cell_size = cell_size;
+        if (i == 0) {
+            // left
+            cell.neighbors = {i + 1};
+        } else if (i == NCELL - 1) {
+            // right
+            cell.neighbors = {i - 1};
+        } else {
+            // interior
+            cell.neighbors = {i - 1, i + 1};
+        }
+        cells.push_back(cell);
+    }
+}
+
+Field Mesh::zero_field(int flag) const {
+    size_t size;
+    if (flag == cell_field_flag) {
+        size = NCELL;
+    } else {
+        size = NFACE;
+    }
+    return Field(size, 0.0);
+}
+
+inline int sgn(Scalar _x) {
+    if (_x == 0.0) return 0;
+    if (_x < 0.0) return -1;
+    return 1;
+}
+
+Field gradient(Field &field, Mesh &mesh) {
+    Field result(mesh.NCELL);
+    for (int i = 0; i < mesh.NCELL; ++i) {
+        if (i == 0 or i == mesh.NCELL - 1) {
+            result[i] = 0.0;
+        } else {
+            auto &c0 = mesh.cells[i - 1];
+            auto &c1 = mesh.cells[i];
+            auto &c2 = mesh.cells[i + 1];
+            auto &f0 = field[i - 1];
+            auto &f1 = field[i];
+            auto &f2 = field[i + 1];
+            auto s1 = (f1 - f0) / (c1.position - c0.position);
+            auto s2 = (f2 - f1) / (c2.position - c1.position);
+            auto s1_abs = std::fabs(s1);
+            auto s2_abs = std::fabs(s2);
+            if ((s1_abs + s2_abs) == 0.0) {
+                result[i] = 0.0;
+            } else {
+                result[i] = (sgn(s1) + sgn(s2)) * (s1_abs * s2_abs) / (s1_abs + s2_abs);
+            }
+        }
+    }
+    return result;
 }

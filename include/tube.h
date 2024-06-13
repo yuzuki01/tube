@@ -2,70 +2,77 @@
 #include <fstream>
 #include <array>
 #include <vector>
+#include <unordered_map>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 #include "omp.h"
 
 
-namespace Tube {
-    const int N_MESH = 50;
-    const int N_DVS = 100;
+/// type def
+typedef int ObjectId;
+typedef std::vector<ObjectId> ObjectIdList;
+typedef std::array<ObjectId, 2> ObjectIdSet;
+typedef double Scalar;
+typedef std::array<Scalar, 2> VectorSet;
+typedef std::vector<Scalar> Field;
+typedef std::vector<Field> DistributionFunction;
 
-    extern int ncell, nface;
-    const double L0 = 1.0;
-    const double R = 0.5;
-    const int K = 0;
-    extern double Ma, Kn, Pr;
-    extern double gamma, Cv;
-    extern double miu0, dt, half_dt;
-    extern double solution_time;
+/// tube head
+#include "mesh.h"
+#include "config.h"
 
-    class Cell {
-    public:
-        int id;
-        double x;
-        double volume;
-        std::vector<int> faces;
-        std::vector<int> neighbors;
+class Tube {
+private:
+    bool run_state = false;
+public:
+    Config config;
+    Mesh mesh, dvs;
 
-        Cell(int cell_id, double x, double volume) : id(cell_id), x(x), volume(volume),
-                                                     neighbors({cell_id, cell_id + 1}) {};
-    };
+    Scalar Kn, Pr;
+    Scalar R, Rho0, T0, L0;
+    Scalar vhs_omega, vhs_index;
+    Scalar gamma{}, Cv{};
+    Scalar miu0{}, dt, half_dt, solution_time{};
+    Scalar stop_time;
+    int K;
+    int step{};
 
-    class Face {
-    public:
-        int id;
-        double x;
-        std::array<int, 2> neighbors;
+    Field rho_cell, T_cell;
+    Field vel_cell, q_cell;
 
-        Face(int face_id, double x) : id(face_id), x(x), neighbors({face_id, face_id}) {};
-    };
+    DistributionFunction g_cell, h_cell;
+    DistributionFunction g_face, h_face;
+    DistributionFunction flux_g, flux_h;
 
-    extern std::vector<Cell> cells;
-    extern std::vector<Face> faces;
-
-    typedef std::vector<double> Field;
-    typedef std::vector<Field> DistributionFunction;
-
-    extern DistributionFunction g_cell, h_cell;
-    extern DistributionFunction g_face, h_face;
-    extern Field rho_cell, rho_cell_n, rho_face;
-    extern Field vel_cell, vel_cell_n, vel_face;
-    extern Field T_cell, T_cell_n, T_face;
-    extern Field tau_cell, tau_cell_n;
-    extern Field q_cell, q_face;
-    extern Field dvs_wgt, dvs_vel;
-
+    explicit Tube(const String& config_file);
 
     void initial();
-    inline double g_maxwell(double rho, double t, double cc);
-    inline double h_maxwell(double t, double gm);
-    inline double g_shakhov(double rho, double t, double cc, double cq, double gm);
-    inline double h_shakhov(double rho, double t, double cc, double cq, double gm);
 
-    void init_mesh(int N);
-    void init_dvs(double scale);
-    void output();
-}
+    inline Scalar tau_f(Scalar rho, Scalar t) const;
+
+    inline Scalar g_maxwell(Scalar rho, Scalar t, Scalar cc) const;
+
+    inline Scalar g_shakhov(Scalar rho, Scalar t, Scalar cc, Scalar cq, Scalar gm) const;
+
+    inline Scalar h_maxwell(Scalar t, Scalar gm) const;
+
+    inline Scalar h_shakhov(Scalar rho, Scalar t, Scalar cc, Scalar cq, Scalar gm) const;
+
+    void reconstruct();
+
+    void fvm_update();
+
+    void do_step();
+
+    void output() const;
+
+    bool run_status() const { return run_state; };
+};
+
+Field gradient(Field &field, Mesh &mesh);
+
+void output(const String &file_name, Field &field);
