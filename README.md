@@ -2,6 +2,8 @@
 
 CDUGKS Solver
 
+![result](./files/sod-shock-tube.png)
+
 ## Quick Start
 
 ```sh
