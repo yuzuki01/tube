@@ -2,8 +2,10 @@
 
 
 Tube::Tube(const String &config_file) : config(config_file) {
-    Kn = config.get("Kn", 1.0);
-    Pr = config.get("Pr", 0.67);
+    omp_set_num_threads(config.get("omp-threads", 4));
+
+    Kn = config.get("Kn", 1e-7);
+    Pr = config.get("Pr", 0.66666666667);
     R = config.get("gas-constant", 0.5);
     K = config.get("gas-k", 0);
     Rho0 = config.get("ref-density", 1.0);
@@ -11,11 +13,11 @@ Tube::Tube(const String &config_file) : config(config_file) {
     T0 = config.get("ref-temperature", 1.0);
     vhs_omega = config.get("vhs-omega", 0.5);
     vhs_index = config.get("vhs-index", 0.81);
-    stop_time = config.get("stop-time", 0.15);
-    dt = config.get("time-step", 0.001);
+    stop_time = config.get("stop-time", 0.14);
+    dt = config.get("time-step", 0.0002);
     half_dt = 0.5 * dt;
 
-    mesh.generate_mesh(config.get("ncell", 50));
+    mesh.generate_mesh(config.get("ncell", 500));
     dvs.generate_dvs(config.get("dvs-mount", 33), config.get("dvs-scale", 8.0));
 
     std::cout << "Solver loaded." << std::endl;
@@ -57,6 +59,7 @@ void Tube::initial() {
                 u = 0.0;
                 T = 1.0;
             }
+#pragma omp parallel for shared(rho, u, T, cell) reduction(+:m0) reduction(+:m1) reduction(+:m2) reduction(+:m3) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
@@ -117,6 +120,7 @@ inline Scalar Tube::h_shakhov(double rho, double t, double cc, double cq, double
 
 void Tube::reconstruct() {
     /// get f_bar on face
+#pragma omp parallel for default(none)
     for (int p = 0; p < dvs.NCELL; ++p) {
         auto &particle = dvs.cells[p];
         /// cell gradient - van leer
@@ -134,45 +138,56 @@ void Tube::reconstruct() {
         }
     }
     {
-        auto m0 = mesh.zero_field(face_field_flag);
-        auto m1 = mesh.zero_field(face_field_flag);
-        auto m2 = mesh.zero_field(face_field_flag);
+        auto m0_face = mesh.zero_field(face_field_flag);
+        auto m1_face = mesh.zero_field(face_field_flag);
+        auto m2_face = mesh.zero_field(face_field_flag);
         /// face macro vars
         for (auto &face: mesh.faces) {
+            double m0, m1, m2;
+            m0 = m1 = m2 = 0.0;
+#pragma omp parallel for shared(face) reduction(+:m0) reduction(+:m1) reduction(+:m2) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto kk = particle.position * particle.position;
                 auto g = g_face[p][face.id];
                 auto h = h_face[p][face.id];
-                m0[face.id] += particle.volume * g;
-                m1[face.id] += particle.volume * g * particle.position;
-                m2[face.id] += particle.volume * (kk * g + h);
+                m0 += particle.volume * g;
+                m1 += particle.volume * g * particle.position;
+                m2 += particle.volume * (kk * g + h);
             }
+            m0_face[face.id] = m0;
+            m1_face[face.id] = m1;
+            m2_face[face.id] = m2;
         }
-        auto m3 = mesh.zero_field(face_field_flag);
+        auto m3_face = mesh.zero_field(face_field_flag);
         for (auto &face: mesh.faces) {
-            auto rho = m0[face.id];
-            auto rhoU = m1[face.id];
+            double m3;
+            m3 = 0.0;
+            auto rho = m0_face[face.id];
+            auto rhoU = m1_face[face.id];
             auto u = rhoU / rho;
+#pragma omp parallel for shared(face, u) reduction(+:m3) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
                 auto cc = c * c;
                 auto g = g_face[p][face.id];
                 auto h = h_face[p][face.id];
-                m3[face.id] += particle.volume * c * (cc * g + h);
+                m3 += particle.volume * c * (cc * g + h);
             }
+            m3_face[face.id] = m3;
         }
         /// get original f on face
         for (auto &face: mesh.faces) {
-            auto rho = m0[face.id];
-            auto rhoU = m1[face.id];
-            auto rhoE = 0.5 * m2[face.id];
+            auto rho = m0_face[face.id];
+            auto rhoU = m1_face[face.id];
+            auto rhoE = 0.5 * m2_face[face.id];
             auto u = rhoU / rho;
             auto T = (rhoE / rho - 0.5 * u * u) / Cv;
             auto tau = tau_f(rho, T);
-            auto q = (tau / (2.0 * tau + half_dt * Pr)) * m3[face.id];
+            auto q = (tau / (2.0 * tau + half_dt * Pr)) * m3_face[face.id];
             auto C_s = half_dt / (2.0 * tau + half_dt);
+#pragma omp parallel for shared(face, rho, u, T, q, C_s) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
@@ -190,6 +205,7 @@ void Tube::reconstruct() {
     {
         auto &face = mesh.faces[0];
         auto &neighbor = mesh.cells[face.cell_id[0]];
+#pragma omp parallel for shared(face, neighbor) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             auto kn = particle.position * face.normal_vector[1];
@@ -207,6 +223,7 @@ void Tube::reconstruct() {
     {
         auto &face = mesh.faces[mesh.NFACE - 1];
         auto &neighbor = mesh.cells[face.cell_id[0]];
+#pragma omp parallel for shared(face, neighbor) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             auto kn = particle.position * face.normal_vector[1];
@@ -228,6 +245,9 @@ void Tube::fvm_update() {
     auto flux_m1 = mesh.zero_field();
     auto flux_m2 = mesh.zero_field();
     for (auto &cell: mesh.cells) {
+        double flux_m0_c, flux_m1_c, flux_m2_c;
+        flux_m0_c = flux_m1_c = flux_m2_c = 0.0;
+#pragma omp parallel for shared(cell) reduction(+:flux_m0_c) reduction(+:flux_m1_c) reduction(+:flux_m2_c) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             double flux_g_tmp = 0.0, flux_h_tmp = 0.0;
@@ -240,14 +260,16 @@ void Tube::fvm_update() {
             }
             flux_g[p][cell.id] = flux_g_tmp;
             flux_h[p][cell.id] = flux_h_tmp;
-            flux_m0[cell.id] += particle.volume * flux_g_tmp;
-            flux_m1[cell.id] += particle.volume * flux_g_tmp * particle.position;
-            flux_m2[cell.id] +=
-                    particle.volume * ((particle.position * particle.position) * flux_g_tmp + flux_h_tmp);
+            flux_m0_c += particle.volume * flux_g_tmp;
+            flux_m1_c += particle.volume * flux_g_tmp * particle.position;
+            flux_m2_c += particle.volume * ((particle.position * particle.position) * flux_g_tmp + flux_h_tmp);
         }
+        flux_m0[cell.id] = flux_m0_c;
+        flux_m1[cell.id] = flux_m1_c;
+        flux_m2[cell.id] = flux_m2_c;
     }
 
-    auto m3 = mesh.zero_field();
+    auto m3_cell = mesh.zero_field();
     for (auto &cell: mesh.cells) {
         auto dt_v = dt / cell.volume;
         /// tn = n
@@ -273,6 +295,9 @@ void Tube::fvm_update() {
         auto cm = half_dt / (half_dt - 2.0 * tau_n);
         auto C = tau / (tau + half_dt);
         auto C_s = half_dt / (2.0 * tau);
+        double m3;
+        m3 = 0.0;
+#pragma omp parallel for shared(cell, dt_v, cm, C, C_s, rho_n, u_n, T_n, q_n, tau_n, rho, u, T, tau) reduction(+:m3) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             /// tn = n
@@ -295,13 +320,15 @@ void Tube::fvm_update() {
             auto g = C * (g_n + half_dt * (g_s / tau + (g_s_n - g_n) / tau_n) - dt_v * flux_g[p][cell.id]);
             auto h = C * (h_n + half_dt * (h_s / tau + (h_s_n - h_n) / tau_n) - dt_v * flux_h[p][cell.id]);
             /// heat-flux
-            m3[cell.id] += 0.5 * particle.volume * c * (cc * g + h);
+            m3 += particle.volume * c * (cc * g + h);
             /// f -> f_bar_plus
             g_cell[p][cell.id] = (1.0 - C_s) * g + C_s * g_s;
             h_cell[p][cell.id] = (1.0 - C_s) * h + C_s * h_s;
         }
+        m3_cell[cell.id] = 0.5 * m3;
     }
-    q_cell = m3;
+    /// update heat-flux
+    q_cell = m3_cell;
 }
 
 void Tube::output() const {

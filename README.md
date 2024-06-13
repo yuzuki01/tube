@@ -1,3 +1,9 @@
 # Sod Shock Tube
 
-Solver: CDUGKS
+CDUGKS Solver
+
+## Quick Start
+
+```sh
+./tube  tube.txt
+```
