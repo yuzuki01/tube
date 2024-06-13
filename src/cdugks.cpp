@@ -2,7 +2,9 @@
 
 
 Tube::Tube(const String &config_file) : config(config_file) {
-    omp_set_num_threads(config.get("omp-threads", 4));
+    int omp_threads = config.get("omp-threads", 4);
+    std::cout << "Set omp threads num = " << omp_threads << std::endl;
+    omp_set_num_threads(omp_threads);
 
     Kn = config.get("Kn", 1e-7);
     Pr = config.get("Pr", 0.66666666667);
