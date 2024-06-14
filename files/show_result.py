@@ -1,5 +1,6 @@
 import os
 import re
+import pickle
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -18,6 +19,7 @@ def read_tec(filename: str):
 files = os.listdir("./result")
 
 solution_time = []
+X = []
 Rho = []
 U = []
 T = []
@@ -31,6 +33,7 @@ for fn in files:
     U.append(data[2])
     T.append(data[3])
     q.append(data[4])
+X = np.asarray(X)
 Rho = np.asarray(Rho)
 U = np.asarray(U)
 T = np.asarray(T)
@@ -45,6 +48,15 @@ T = T[sorted_indices]
 q = q[sorted_indices]
 
 print(Rho.shape)
+with open("data.pkl", "wb") as fp:
+    pickle.dump({
+        "time": solution_time,
+        "position": X,
+        "Rho": Rho,
+        "U": U,
+        "T": T,
+        "q": q
+    }, fp)
 
 plt.figure(figsize=(15, 5), dpi=100)
 plt.pcolormesh(solution_time, X, Rho.T, cmap='coolwarm')
