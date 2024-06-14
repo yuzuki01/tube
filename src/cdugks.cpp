@@ -7,8 +7,8 @@ Tube::Tube(const String &config_file) : config(config_file) {
     omp_set_num_threads(omp_threads);
 
     Kn = config.get("Kn", 1e-7);
-    Pr = config.get("Pr", 0.66666666667);
-    R = config.get("gas-constant", 0.5);
+    Pr = config.get("Pr", 1.0);
+    R = config.get("gas-constant", 1.0);
     K = config.get("gas-k", 0);
     Rho0 = config.get("ref-density", 1.0);
     L0 = config.get("ref-length", 1.0);
@@ -59,7 +59,7 @@ void Tube::initial() {
             } else {
                 rho = 0.125;
                 u = 0.0;
-                T = 1.0;
+                T = 0.8;
             }
 #pragma omp parallel for shared(rho, u, T, cell) reduction(+:m0) reduction(+:m1) reduction(+:m2) reduction(+:m3) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
