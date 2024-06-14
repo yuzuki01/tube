@@ -1,18 +1,18 @@
-omp-threads     10
+omp-threads     1
 
 ncell           500
-dvs-mount       33
-dvs-scale       8.0
+dvs-mount       44
+dvs-scale       10.0
 
-Kn              1e-7
-Pr              0.66666666667
+Kn              1e-5
+Pr              1.0
 
-gas-constant        0.5
-gas-k               0
+gas-constant        1.0
+gas-k               2
 ref-density         1.0
 ref-length          1.0
 ref-temperature     1.0
 vhs-omega           0.5
 vhs-index           0.81
 stop-time           0.14
-time-step           0.0002
+time-step           0.0001
