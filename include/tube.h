@@ -27,6 +27,7 @@ typedef std::vector<Field> DistributionFunction;
 
 class Tube {
 private:
+    int design_point = 0;
     bool run_state = false;
 public:
     Config config;
@@ -49,6 +50,8 @@ public:
     DistributionFunction flux_g, flux_h;
 
     explicit Tube(const String& config_file);
+
+    Tube(const String& config_file, int design_point, double Kn);
 
     void initial();
 

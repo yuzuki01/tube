@@ -2,11 +2,7 @@
 
 
 Tube::Tube(const String &config_file) : config(config_file) {
-    int omp_threads = config.get("omp-threads", 4);
-    std::cout << "Set omp threads num = " << omp_threads << std::endl;
-    omp_set_num_threads(omp_threads);
-
-    Kn = config.get("Kn", 1e-7);
+    Kn = config.get("Kn", 1e-5);
     Pr = config.get("Pr", 1.0);
     R = config.get("gas-constant", 1.0);
     K = config.get("gas-k", 0);
@@ -22,7 +18,28 @@ Tube::Tube(const String &config_file) : config(config_file) {
     mesh.generate_mesh(config.get("ncell", 500));
     dvs.generate_dvs(config.get("dvs-mount", 33), config.get("dvs-scale", 8.0));
 
+#pragma omp critical
     std::cout << "Solver loaded." << std::endl;
+}
+
+Tube::Tube(const String &config_file, int design_point, double Kn) : config(config_file), design_point(design_point), Kn(Kn) {
+    Pr = config.get("Pr", 1.0);
+    R = config.get("gas-constant", 1.0);
+    K = config.get("gas-k", 0);
+    Rho0 = config.get("ref-density", 1.0);
+    L0 = config.get("ref-length", 1.0);
+    T0 = config.get("ref-temperature", 1.0);
+    vhs_omega = config.get("vhs-omega", 0.5);
+    vhs_index = config.get("vhs-index", 0.81);
+    stop_time = config.get("stop-time", 0.14);
+    dt = config.get("time-step", 0.0002);
+    half_dt = 0.5 * dt;
+
+    mesh.generate_mesh(config.get("ncell", 500));
+    dvs.generate_dvs(config.get("dvs-mount", 33), config.get("dvs-scale", 8.0));
+
+#pragma omp critical
+    std::cout << "design point: " << design_point << " - Solver loaded, Kn=" << Kn << std::endl;
 }
 
 void Tube::initial() {
@@ -61,7 +78,6 @@ void Tube::initial() {
                 u = 0.0;
                 T = 0.8;
             }
-#pragma omp parallel for shared(rho, u, T, cell) reduction(+:m0) reduction(+:m1) reduction(+:m2) reduction(+:m3) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
@@ -89,7 +105,8 @@ void Tube::initial() {
             q_cell[cell.id] = q;
         }
     }
-    std::cout << "Initialization finished." << std::endl;
+#pragma omp critical
+    std::cout << "design point: " << design_point << " - Initialization finished." << std::endl;
 }
 
 inline Scalar Tube::tau_f(double rho, double t) const {
@@ -122,7 +139,6 @@ inline Scalar Tube::h_shakhov(double rho, double t, double cc, double cq, double
 
 void Tube::reconstruct() {
     /// get f_bar on face
-#pragma omp parallel for default(none)
     for (int p = 0; p < dvs.NCELL; ++p) {
         auto &particle = dvs.cells[p];
         /// cell gradient - van leer
@@ -147,7 +163,6 @@ void Tube::reconstruct() {
         for (auto &face: mesh.faces) {
             double m0, m1, m2;
             m0 = m1 = m2 = 0.0;
-#pragma omp parallel for shared(face) reduction(+:m0) reduction(+:m1) reduction(+:m2) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto kk = particle.position * particle.position;
@@ -168,7 +183,6 @@ void Tube::reconstruct() {
             auto rho = m0_face[face.id];
             auto rhoU = m1_face[face.id];
             auto u = rhoU / rho;
-#pragma omp parallel for shared(face, u) reduction(+:m3) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
@@ -189,7 +203,6 @@ void Tube::reconstruct() {
             auto tau = tau_f(rho, T);
             auto q = (tau / (2.0 * tau + half_dt * Pr)) * m3_face[face.id];
             auto C_s = half_dt / (2.0 * tau + half_dt);
-#pragma omp parallel for shared(face, rho, u, T, q, C_s) default(none)
             for (int p = 0; p < dvs.NCELL; ++p) {
                 auto &particle = dvs.cells[p];
                 auto c = particle.position - u;
@@ -207,7 +220,6 @@ void Tube::reconstruct() {
     {
         auto &face = mesh.faces[0];
         auto &neighbor = mesh.cells[face.cell_id[0]];
-#pragma omp parallel for shared(face, neighbor) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             auto kn = particle.position * face.normal_vector[1];
@@ -225,7 +237,6 @@ void Tube::reconstruct() {
     {
         auto &face = mesh.faces[mesh.NFACE - 1];
         auto &neighbor = mesh.cells[face.cell_id[0]];
-#pragma omp parallel for shared(face, neighbor) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             auto kn = particle.position * face.normal_vector[1];
@@ -249,7 +260,6 @@ void Tube::fvm_update() {
     for (auto &cell: mesh.cells) {
         double flux_m0_c, flux_m1_c, flux_m2_c;
         flux_m0_c = flux_m1_c = flux_m2_c = 0.0;
-#pragma omp parallel for shared(cell) reduction(+:flux_m0_c) reduction(+:flux_m1_c) reduction(+:flux_m2_c) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             double flux_g_tmp = 0.0, flux_h_tmp = 0.0;
@@ -299,7 +309,6 @@ void Tube::fvm_update() {
         auto C_s = half_dt / (2.0 * tau);
         double m3;
         m3 = 0.0;
-#pragma omp parallel for shared(cell, dt_v, cm, C, C_s, rho_n, u_n, T_n, q_n, tau_n, rho, u, T, tau) reduction(+:m3) default(none)
         for (int p = 0; p < dvs.NCELL; ++p) {
             auto &particle = dvs.cells[p];
             /// tn = n
@@ -334,24 +343,37 @@ void Tube::fvm_update() {
 }
 
 void Tube::output() const {
-    system("if not exist result mkdir result");
-    std::stringstream ss;
-    ss << "./result/step-" << step << ".dat.plt";
     std::ofstream file;
-    file.open(ss.str());
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file: " << ss.str() << std::endl;
-        throw std::invalid_argument("Failed to open file!");
+    {
+        std::stringstream ss, command;
+        command << "if not exist kn" << Kn << " mkdir kn" << Kn;
+        ss << "./kn" << Kn << "/step-" << step << ".dat.plt";
+        system(command.str().c_str());
+        file.open(ss.str());
+        if (!file.is_open()) {
+            std::cerr << "Failed to open file: " << ss.str() << std::endl;
+            throw std::invalid_argument("Failed to open file!");
+        }
     }
     /// Write
-    file << R"(VARIABLES= "X", "Rho", "U", "T", "q")" << std::endl;
-    file << "ZONE T=\"Step-" << step << "\", I=" << mesh.NCELL << ", DATAPACKING=POINT, SOLUTIONTIME=" << solution_time
+    file << R"(VARIABLES= "X", "time", "Kn", "Rho", "U", "T", "q")" << std::endl;
+    file << "ZONE T=\"Kn=" << Kn << "\", I=" << mesh.NCELL << ", DATAPACKING=POINT, SOLUTIONTIME=" << solution_time
          << std::endl << std::endl;
     for (auto &cell: mesh.cells) {
-        file << " " << cell.position << " " << rho_cell[cell.id]
-             << " " << vel_cell[cell.id] << " " << T_cell[cell.id]
+        file << " " << cell.position << " " << solution_time << " " << Kn
+             << " " << rho_cell[cell.id] << " " << vel_cell[cell.id] << " " << T_cell[cell.id]
              << " " << q_cell[cell.id] << std::endl;
     }
+    file.close();
+    /// Write config
+    std::ofstream config_file;
+    {
+        std::stringstream ss;
+        ss << "./kn" << Kn << "/config.txt";
+        config_file.open(ss.str());
+    }
+    config_file << "Kn " << Kn << "\nPr " << Pr << "\nR " << R << std::endl;
+    config_file.close();
 }
 
 void Tube::do_step() {
