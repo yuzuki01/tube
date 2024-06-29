@@ -2,6 +2,8 @@
 
 CDUGKS Solver
 
+2/3D CDUGKS solver can be found <a href="https://github.com/yuzuki01/meso-lts">here</a>. Your star would be my motivation to make it better.
+
 ```
 gas-constant        1.0
 gas-k               2       # gamma = 1.4
